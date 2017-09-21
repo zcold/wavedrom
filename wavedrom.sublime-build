@@ -1,0 +1,4 @@
+{
+    "target": "compile_wavedrom",
+    "selector": "source.wavedrom"
+}

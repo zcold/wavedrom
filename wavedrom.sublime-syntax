@@ -1,0 +1,1318 @@
+%YAML 1.2
+---
+name: Wavedrom
+file_extensions:
+  - wavedrom
+# first_line_match: ^#!/.*\bpython\d?\b
+scope: source.wavedrom
+
+variables:
+  # We support unicode here because Python 3 is the future
+  identifier_continue: '[[:alnum:]_]'
+  identifier: '\b[[:alpha:]_]{{identifier_continue}}*\b'
+  path: '({{identifier}} *\. *)*{{identifier}}'
+  sql_indicator: \s*(?:SELECT|INSERT|UPDATE|DELETE|CREATE|REPLACE|ALTER|WITH)\b
+
+contexts:
+  main:
+    # Triple-quoted strings at the global level are docstrings
+    - match: (?i)(?=^\s*[ur]{0,2}('''|"""))
+      push: maybe-docstrings
+    - include: statements
+
+  statements:
+    - include: inline-statements
+    - include: block-statements
+    - include: classes
+    - include: functions
+    - include: modifiers
+    - include: assignments
+    - match: ;
+      scope: punctuation.terminator.statement.wavedrom
+    - include: expressions
+
+  inline-statements:
+    - include: imports
+    - include: decorators
+    - match: \b(raise)\b
+      scope: keyword.control.flow.raise.wavedrom
+      push:
+        - meta_scope: meta.statement.raise.wavedrom
+        - include: line-continuation-or-pop
+        - match: \b(from)\b
+          scope: keyword.control.flow.raise.from.wavedrom
+          set:
+            - meta_scope: meta.statement.raise.wavedrom
+            - include: line-continuation-or-pop
+            - include: expressions
+        - include: expressions
+    - match: \b(assert)\b
+      scope: keyword.other.assert.wavedrom
+    - match: \b(del)\b
+      scope: keyword.other.del.wavedrom
+    - match: \b(print)\b(?! *($|[,.()\]}]))
+      scope: keyword.other.print.wavedrom
+    - match: \b(exec)\b(?! *($|[,.()\]}]))
+      scope: keyword.other.exec.wavedrom
+    - match: \b(return)\b
+      scope: keyword.control.flow.return.wavedrom
+    - match: \b(break|continue|pass)\b
+      scope: keyword.control.flow.wavedrom
+
+  imports:
+    - match: \b(import)\b
+      scope: keyword.control.import.wavedrom
+      push:
+        - meta_scope: meta.statement.import.wavedrom
+        - include: line-continuation-or-pop
+        - include: import-alias
+        - include: dotted-name
+        - match: ','
+          scope: punctuation.separator.import-list.wavedrom
+        - match: (?=\S)
+          pop: true
+    - match: \b(from)\b
+      scope: keyword.control.import.from.wavedrom
+      push:
+        - meta_scope: meta.statement.import.wavedrom
+          meta_content_scope: meta.import-source.wavedrom
+        - include: line-continuation-or-pop
+        - match: \b(import)\b
+          scope: keyword.control.import.wavedrom
+          set:
+            - include: line-continuation-or-pop
+            - match: ' *(\()'
+              captures:
+                1: punctuation.section.import-list.begin.wavedrom
+              set:
+                - meta_scope: meta.statement.import.wavedrom
+                - include: comments
+                - match: \)
+                  scope: punctuation.section.import-list.end.wavedrom
+                  pop: true
+                - include: import-name-list
+                - match: (?=\S)
+                  pop: true
+            - match: ''
+              set:
+                - meta_scope: meta.statement.import.wavedrom
+                - include: line-continuation-or-pop
+                - include: import-name-list
+                - match: (?=\S)
+                  pop: true
+            - match: (?=\S)
+              pop: true
+        - include: dotted-name
+        - match: (\.)
+          scope: punctuation.accessor.wavedrom
+        - match: (?=\S)
+          pop: true
+
+  import-name-list:
+    - match: ','
+      scope: punctuation.separator.import-list.wavedrom
+    - include: import-alias
+    - include: name
+    - match: \*
+      scope: constant.language.import-all.wavedrom
+    - match: \S+
+      scope: invalid.illegal.name.import.wavedrom
+
+  import-alias:
+    - match: \b(as)\b
+      scope: keyword.control.import.as.wavedrom
+
+  block-statements:
+    # async for ... in ...:
+    - match: \b(async +)?(for)\b
+      captures:
+        1: storage.modifier.async.wavedrom
+        2: keyword.control.flow.for.wavedrom
+      push:
+        - meta_scope: meta.statement.for.wavedrom
+        - include: line-continuation-or-pop
+        - match: \b(in)\b
+          scope: keyword.control.flow.for.in.wavedrom
+          set:
+            - meta_scope: meta.statement.for.wavedrom
+            - include: line-continuation-or-pop
+            - match: ':'
+              scope: punctuation.section.block.for.wavedrom
+              pop: true
+            - include: expressions
+        - match: ':'
+          scope: invalid.illegal.missing-in.wavedrom
+          pop: true
+        - include: target-list
+    # async with ... as ...:
+    - match: \b(async +)?(with)\b
+      captures:
+        1: storage.modifier.async.wavedrom
+        2: keyword.control.flow.with.wavedrom
+      push: with-body
+    # except ... as ...:
+    - match: \b(except)\b
+      scope: keyword.control.flow.except.wavedrom
+      push:
+        - meta_scope: meta.statement.except.wavedrom
+        - include: line-continuation-or-pop
+        - match: ':'
+          scope: punctuation.section.block.except.wavedrom
+          pop: true
+        - match: '\b(as)\b'
+          scope: keyword.control.flow.as.wavedrom
+          set:
+            - meta_scope: meta.statement.except.wavedrom
+            - include: line-continuation-or-pop
+            - match: ':'
+              scope: punctuation.section.block.except.wavedrom
+              pop: true
+            - include: name
+        - include: target-list
+    - match: \b(elif|else|finally|if|try|while)\b
+      scope: keyword.control.flow.wavedrom
+
+  with-body:
+    - meta_scope: meta.statement.with.wavedrom
+    - include: line-continuation-or-pop
+    - match: \b(as)\b
+      scope: keyword.control.flow.with.as.wavedrom
+      set: with-as
+    - match: ':'
+      scope: punctuation.section.block.with.wavedrom
+      pop: true
+    - match: ','
+      scope: punctuation.separator.with-resources.wavedrom
+    - include: expressions
+
+  with-as:
+    - meta_scope: meta.statement.with.wavedrom
+    - include: line-continuation-or-pop
+    - match: ':'
+      scope: punctuation.section.block.with.wavedrom
+      pop: true
+    - match: ','
+      scope: punctuation.separator.with-resources.wavedrom
+      set: with-body
+    - include: name
+
+  expressions: # Always include this last!
+    - include: comments
+    - include: constants
+    - include: numbers
+    - include: yields
+    - include: operators
+    - include: lambda
+    - match: \b(await)\b
+      scope: keyword.other.await.wavedrom
+    - include: inline-if
+    - include: strings
+    - include: function-calls
+    - include: item-access
+    - include: line-continuation
+    - include: dotted-name
+    - match: \(
+      scope: punctuation.section.group.begin.wavedrom
+      push:
+        - meta_scope: meta.group.wavedrom
+        - match: \)
+          scope: punctuation.section.group.end.wavedrom
+          pop: true
+        - match: ','
+          scope: punctuation.separator.tuple.wavedrom
+        - include: inline-for
+        - include: expressions
+    - match: \)
+      scope: invalid.illegal.stray.brace.round.wavedrom
+    - match: \]
+      scope: invalid.illegal.stray.brace.square.wavedrom
+    - match: \}
+      scope: invalid.illegal.stray.brace.curly.wavedrom
+    - include: lists
+    - include: dictionaries-and-sets
+    - match: '(\.) *(?={{identifier}})'
+      captures:
+        1: punctuation.accessor.wavedrom
+      push:
+        - include: magic-function-names
+        - include: magic-variable-names
+        - include: illegal-names
+        - include: generic-names
+        - match: ''
+          pop: true
+    # For debugging
+    # - match: \S
+    #   scope: invalid.illegal.unmatched
+
+  comments:
+    - match: "//"
+      scope: punctuation.definition.comment.wavedrom
+      push:
+        - meta_scope: comment.line.number-sign.wavedrom
+        - match: \n
+          pop: true
+
+  constants:
+    - match: \b(None|True|False|Ellipsis|NotImplemented)\b
+      scope: constant.language.wavedrom
+
+  numbers:
+    - match: \b(?i:(0x\h*)L)
+      scope: constant.numeric.integer.long.hexadecimal.wavedrom
+    - match: \b(?i:(0x\h*))
+      scope: constant.numeric.integer.hexadecimal.wavedrom
+    - match: '\b(?i:0(o|[0-7])[0-7]*L)'
+      scope: constant.numeric.integer.long.octal.wavedrom
+    - match: '\b(?i:0(o|[0-7])[0-7]*)'
+      scope: constant.numeric.integer.octal.wavedrom
+    - match: \b(?i:0b[01]*L)
+      scope: constant.numeric.integer.long.binary.wavedrom
+    - match: \b(?i:0b[01]*)
+      scope: constant.numeric.integer.binary.wavedrom
+    - match: '\b(?i:(((\d+(\.(?=[^a-zA-Z_])\d*)?|\.\d+)(e[\-\+]?\d+)?))J)'
+      scope: constant.numeric.complex.wavedrom
+    - match: '\b(?i:(\d+\.\d*(e[\-\+]?\d+)?))(?=[^a-zA-Z_])'
+      scope: constant.numeric.float.wavedrom
+    - match: '(?i:(\.\d+(e[\-\+]?\d+)?))'
+      scope: constant.numeric.float.wavedrom
+    - match: '\b(?i:(\d+e[\-\+]?\d+))'
+      scope: constant.numeric.float.wavedrom
+    - match: '\b(?i:([1-9]+[0-9]*|0)L)'
+      scope: constant.numeric.integer.long.decimal.wavedrom
+    - match: '\b([1-9]+[0-9]*|0)'
+      scope: constant.numeric.integer.decimal.wavedrom
+
+  modifiers:
+    - match: \b(?:(global)|(nonlocal))\b
+      captures:
+        1: storage.modifier.global.wavedrom
+        2: storage.modifier.nonlocal.wavedrom
+      push:
+        - include: line-continuation-or-pop
+        - match: ','
+          scope: punctuation.separator.storage-list.wavedrom
+        - include: name
+        - match: \S+
+          scope: invalid.illegal.name.storage.wavedrom
+
+  yields:
+    - match: \b(yield)(?:\s+(from))?\b
+      captures:
+        1: keyword.control.flow.yield.wavedrom
+        2: keyword.control.flow.yield-from.wavedrom
+
+  assignments:
+    - match: \+=|-=|\*=|/=|//=|%=|&=|\|=|\^=|>>=|<<=|\*\*=
+      scope: keyword.operator.assignment.augmented.wavedrom
+    - match: '=(?!=)'
+      scope: keyword.operator.assignment.wavedrom
+
+  operators:
+    - match: <>
+      scope: invalid.deprecated.operator.wavedrom
+    - match: <\=|>\=|\=\=|<|>|\!\=
+      scope: keyword.operator.comparison.wavedrom
+    - match: \+|\-|\*|\*\*|/|//|%|<<|>>|&|\||\^|~
+      scope: keyword.operator.arithmetic.wavedrom
+    - match: \b(and|in|is|not|or)\b
+      comment: keyword operators that evaluate to True or False
+      scope: keyword.operator.logical.wavedrom
+
+  classes:
+    - match: '^\s*(class)\b'
+      captures:
+        1: storage.type.class.wavedrom
+      push:
+        - meta_scope: meta.class.wavedrom
+        - include: line-continuation-or-pop
+        - match: ':'
+          scope: punctuation.section.class.begin.wavedrom
+          set: maybe-docstrings
+        - match: "(?={{identifier}})"
+          push:
+            - meta_content_scope: entity.name.class.wavedrom
+            - include: entity-name-class
+            - match: ''
+              pop: true
+        - match: '(?=\()'
+          set:
+            - match: \(
+              scope: punctuation.section.inheritance.begin.wavedrom
+              set:
+                - meta_scope: meta.class.inheritance.wavedrom
+                - match: \)
+                  scope: punctuation.section.inheritance.end.wavedrom
+                  set:
+                    - include: line-continuation-or-pop
+                    - match: ':'
+                      scope: meta.class.wavedrom punctuation.section.class.begin.wavedrom
+                      set: maybe-docstrings
+                    - match: (?=\S)
+                      pop: true
+                - match: ':'
+                  scope: invalid.illegal.no-closing-parens.wavedrom
+                  pop: true
+                - match: ','
+                  scope: punctuation.separator.inheritance.wavedrom
+                - match: '(?={{path}})'
+                  push:
+                    - meta_scope: entity.other.inherited-class.wavedrom
+                    - include: identifier-parts
+                    - match: '{{identifier}}'
+                    - match: '(?=\S)'
+                      pop: true
+                - include: expressions
+
+  functions:
+    - match: '^\s*(?:(async)\s+)?(def)\b'
+      captures:
+        1: storage.modifier.async.wavedrom
+        2: storage.type.function.wavedrom
+      push:
+        - meta_scope: meta.function.wavedrom
+        - include: line-continuation-or-pop
+        - match: ':'
+          scope: punctuation.section.function.begin.wavedrom
+          set: maybe-docstrings
+        - match: "(?={{identifier}})"
+          push:
+            - meta_content_scope: entity.name.function.wavedrom
+            - include: entity-name-function
+            - match: ''
+              pop: true
+        - match: '(?=\()'
+          set:
+            - match: \(
+              scope: meta.function.parameters.wavedrom punctuation.section.parameters.begin.wavedrom
+              set: function-parameters
+
+  function-parameters:
+    - meta_content_scope: meta.function.parameters.wavedrom
+    - match: \)
+      scope: punctuation.section.parameters.end.wavedrom
+      set: function-after-parameters
+    - include: comments
+    - match: ','
+      scope: punctuation.separator.parameters.wavedrom
+    - match: '(?==)'
+      set:
+        - match: '='
+          scope: keyword.operator.assignment.wavedrom
+          set:
+            - meta_scope: meta.function.parameters.default-value.wavedrom
+            - match: '(?=[,)])'
+              set: function-parameters
+            - include: expressions
+    - match: '(?=:)'
+      set:
+        - match: ':'
+          scope: punctuation.separator.annotation.parameter.wavedrom
+          set:
+            - meta_scope: meta.function.parameters.annotation.wavedrom
+            - match: '(?=[,)=])'
+              set: function-parameters
+            - include: expressions
+    - include: illegal-names
+    - match: '{{identifier}}'
+      scope: variable.parameter.wavedrom
+
+  function-after-parameters:
+    - meta_content_scope: meta.function.wavedrom
+    - match: '(?=->)'
+      set:
+        - meta_content_scope: meta.function.annotation.return.wavedrom
+        - match: ->
+          scope: punctuation.separator.annotation.return.wavedrom
+        - match: '(?=:)'
+          set: function-after-parameters
+        - include: expressions # includes line-continuation
+    - match: ':'
+      scope: punctuation.section.function.begin.wavedrom
+      set: maybe-docstrings
+    - include: comments
+    - match: (?=\S)
+      pop: true
+
+  decorators:
+    - match: '@'
+      scope: keyword.other.decorator.wavedrom
+      push:
+        - meta_scope: meta.statement.decorator.wavedrom
+        - include: line-continuation-or-pop
+        - include: expressions
+
+  item-access:
+    - match: '(?={{path}}\s*\[)'
+      push:
+        - match: \]
+          scope: meta.item-access.wavedrom punctuation.section.brackets.end.wavedrom
+          set: after-function-call-item-access
+        - match: '(?={{path}}\s*\[)'
+          push:
+            - meta_content_scope: meta.item-access.wavedrom
+            - match: '(?=\s*\[)'
+              pop: true
+            - include: dotted-name
+        - match: \[
+          scope: meta.item-access.wavedrom punctuation.section.brackets.begin.wavedrom
+          push:
+            - meta_content_scope: meta.item-access.arguments.wavedrom
+            - match: '(?=\])'
+              pop: true
+            - include: expressions
+
+  function-calls:
+    - match: '(?=\.?{{path}}\s*\()'
+      push:
+        - meta_scope: meta.function-call.wavedrom
+        - match: \)
+          scope: punctuation.section.arguments.end.wavedrom
+          set: after-function-call-item-access
+        - match: '(?=\.?{{path}}\s*\()'
+          push:
+            - match: (?=\s*\()
+              pop: true
+            - match: ' *(\.) *(?={{identifier}})'
+              captures:
+                1: punctuation.accessor.wavedrom
+              set:
+                - include: dotted-name-specials
+                - match: '{{identifier}}(?=\s*\()'
+                  scope: variable.function.wavedrom
+                - include: generic-names
+            - match: '(?={{identifier}})'
+              push:
+                - include: name-specials
+                - match: '{{identifier}}(?=\s*\()'
+                  scope: variable.function.wavedrom
+                - include: generic-names
+        - match: \(
+          scope: punctuation.section.arguments.begin.wavedrom
+          push:
+            - meta_content_scope: meta.function-call.arguments.wavedrom
+            - match: (?=\))
+              pop: true
+            - include: keyword-arguments
+            - match: ','
+              scope: punctuation.separator.parameters.wavedrom
+            - include: inline-for
+            - include: expressions
+
+  after-function-call-item-access:
+    # A function returned by a function call or item access
+    - match: '\s*(\()'
+      captures:
+        1: punctuation.section.arguments.begin.wavedrom
+      push:
+        - meta_scope: meta.function-call.wavedrom
+        - meta_content_scope: meta.function-call.arguments.wavedrom
+        - match: \)
+          scope: punctuation.section.arguments.end.wavedrom
+          pop: true
+        - include: keyword-arguments
+        - match: ','
+          scope: punctuation.separator.parameters.wavedrom
+        - include: inline-for
+        - include: expressions
+    # item access from a value returned from a function or item access
+    - match: '\s*(\[)'
+      captures:
+        1: meta.item-access.wavedrom punctuation.section.brackets.begin.wavedrom
+      push:
+        - meta_content_scope: meta.item-access.arguments.wavedrom
+        - match: \]
+          scope: meta.item-access.wavedrom punctuation.section.brackets.end.wavedrom
+          pop: true
+        - include: expressions
+    - match: ''
+      pop: true
+
+  lambda:
+    - match: \b(lambda)(?=\s|:|$)
+      scope: storage.type.function.inline.wavedrom
+      push:
+        - meta_scope: meta.function.inline.wavedrom
+        - meta_content_scope: meta.function.inline.parameters.wavedrom
+        - include: line-continuation-or-pop
+        - match: '\:'
+          scope: punctuation.section.function.begin.wavedrom
+          pop: true
+        - match: ','
+          scope: punctuation.separator.parameters.wavedrom
+        - include: keyword-arguments
+        - include: illegal-names
+        - match: '{{identifier}}'
+          scope: variable.parameter.wavedrom
+
+  lists:
+    - match: '(\[)(\s*(\]))\b'
+      captures:
+        1: punctuation.section.list.begin.wavedrom
+        2: meta.empty-list.wavedrom
+        3: punctuation.section.list.end.wavedrom
+    - match: \[
+      scope: punctuation.section.list.begin.wavedrom
+      push:
+        - meta_scope: meta.structure.list.wavedrom
+        - match: \]
+          scope: punctuation.section.list.end.wavedrom
+          pop: true
+        - match: ','
+          scope: punctuation.separator.list.wavedrom
+        - include: inline-for
+        - include: expressions
+
+  dictionaries-and-sets:
+    - match: '(\{)(\s*(\}))'
+      scope: meta.structure.dictionary.wavedrom
+      captures:
+        1: punctuation.section.dictionary.begin.wavedrom
+        2: meta.empty-dictionary.wavedrom
+        3: punctuation.section.dictionary.end.wavedrom
+    - match: \{
+      scope: punctuation.section.dictionary-or-set.begin.wavedrom
+      push:
+        - meta_scope: meta.structure.dictionary-or-set.wavedrom
+        - match: \}
+          scope: punctuation.section.dictionary-or-set.end.wavedrom
+          pop: true
+        - match: ','
+          scope: punctuation.separator.dictionary-or-set.wavedrom
+        - match: ':'
+          scope: punctuation.separator.key-value.wavedrom
+        - include: inline-for
+        - include: expressions
+
+  identifier-parts:
+    - match: '{{identifier}} *(\.)'
+      captures:
+        1: punctuation.accessor.wavedrom
+
+  builtin-exceptions:
+    - match: |-
+        (?x)\b(
+        	(
+        		Arithmetic|Assertion|Attribute|BlockingIO|BrokenPipe|Buffer|ChildProcess|
+        		Connection(Aborted|Refused|Reset)?|EOF|Environment|FileExists|
+        		FileNotFound|FloatingPoint|Interrupted|IO|IsADirectoryError|
+        		Import|Indentation|Index|Key|Lookup|Memory|Name|NotADirectory|
+        		NotImplemented|OS|Overflow|Permission|ProcessLookup|Reference|
+        		Runtime|Standard|Syntax|System|Tab|Timeout|Type|UnboundLocal|
+        		Unicode(Encode|Decode|Translate)?|Value|VMS|Windows|ZeroDivision
+        	)Error|
+        	((Pending)?Deprecation|Runtime|Syntax|User|Future|Import|Unicode|Bytes)?Warning|
+        	(Base)?Exception|
+        	SystemExit|StopIteration|NotImplemented|KeyboardInterrupt|GeneratorExit
+        )\b
+      scope: support.type.exception.wavedrom
+  builtin-functions:
+    - match: |-
+        (?x)\b(
+        	__import__|all|abs|any|apply|ascii|bin|callable|chr|classmethod|cmp|coerce|
+        	compile|delattr|dir|divmod|enumerate|eval|exec|execfile|filter|format|getattr|
+        	globals|hasattr|hash|help|hex|id|input|intern|isinstance|issubclass|iter|
+        	len|locals|map|max|min|next|oct|open|ord|pow|print|property|range|
+        	raw_input|reduce|reload|repr|reversed|round|setattr|sorted|staticmethod|
+        	sum|super|type|unichr|vars|zip
+        )\b
+      scope: support.function.builtin.wavedrom
+
+  builtin-types:
+    - match: |-
+        (?x)\b(
+        	basestring|bool|buffer|bytearray|bytes|complex|dict|float|frozenset|int|
+        	list|long|memoryview|object|range|set|slice|str|tuple|unicode|xrange
+        )\b
+      scope: support.type.wavedrom
+
+  constant-placeholder:
+    - match: '%(?i:\([a-z_]+\))?#?0?\-? ?\+?([0-9]*|\*)(\.([0-9]*|\*))?[hlL]?[acdeEfFgGiorsuxX%]'
+      scope: constant.other.placeholder.wavedrom
+    - match: '%(?:[aAwdbBmyYHIpMSfzZjUWcxX%]|-[dmHIMSj])'
+      scope: constant.other.placeholder.wavedrom
+    - match: '\{\{|\}\}'
+      scope: constant.character.escape.wavedrom
+    - match: '\{([\w.\[\]]*)(:.?[<>=^]?)?[ +-]?\d*,?(\.\d+)?!?[abcdeEfFgGnorsxX%]?\}'
+      scope: constant.other.placeholder.wavedrom
+
+  name:
+    - match: '(?={{identifier}})'
+      push:
+        - include: name-specials
+        - include: generic-names
+
+  name-specials:
+    - match: '(?!{{identifier_continue}})'
+      pop: true
+    - include: builtin-functions
+    - include: builtin-types
+    - include: builtin-exceptions
+    - include: illegal-names
+    - include: magic-function-names
+    - include: magic-variable-names
+    - include: language-variables
+
+  dotted-name:
+    - match: '(?={{path}})'
+      push:
+        - match: ' *(\.) *(?={{identifier}})'
+          captures:
+            1: punctuation.accessor.wavedrom
+          push:
+            - include: dotted-name-specials
+            - include: generic-names
+        - match: '(?!{{identifier_continue}})'
+          pop: true
+        - include: name
+
+  dotted-name-specials:
+    - match: '(?!{{identifier_continue}})'
+      pop: true
+    - include: magic-function-names
+    - include: magic-variable-names
+    - include: illegal-names
+
+  entity-name-class:
+    - include: illegal-names
+    - include: generic-names
+
+  entity-name-function:
+    - include: magic-function-names
+    - include: illegal-names
+    - include: generic-names
+
+  escaped-char:
+    - match: '(\\x\h{2})|(\\[0-7]{3})|(\\[\\"''abfnrtv])'
+      captures:
+        1: constant.character.escape.hex.wavedrom
+        2: constant.character.escape.octal.wavedrom
+        3: constant.character.escape.wavedrom
+
+  escaped-unicode-char:
+    - match: '(\\U\h{8})|(\\u\h{4})|(\\N\{[a-zA-Z ]+\})'
+      captures:
+        1: constant.character.escape.unicode.16-bit-hex.wavedrom
+        2: constant.character.escape.unicode.32-bit-hex.wavedrom
+        3: constant.character.escape.unicode.name.wavedrom
+
+  generic-names:
+    - match: "{{identifier}}"
+
+  illegal-names:
+    - match: \b(and|as|assert|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|not|or|pass|raise|return|try|while|with|yield)\b
+      scope: invalid.illegal.name.wavedrom
+
+  keyword-arguments:
+    - match: '(?={{identifier}}\s*=(?!=))'
+      push:
+        - include: line-continuation-or-pop
+        - match: '='
+          scope: keyword.operator.assignment.wavedrom
+          set:
+            - match: (?=\s*[,):])
+              pop: true
+            - include: expressions
+        - include: illegal-names
+        - match: '{{identifier}}'
+          scope: variable.parameter.wavedrom
+
+  language-variables:
+    - match: \b(self|cls)\b
+      scope: variable.language.wavedrom
+
+  line-continuation:
+    - match: (\\)(.*)$\n?
+      captures:
+        1: punctuation.separator.continuation.line.wavedrom
+        2: invalid.illegal.unexpected-text.wavedrom
+    # make sure to resume parsing at next line
+      push:
+        # This prevents strings after a continuation from being a docstring
+        - include: strings
+        - match: '(?=\S)'
+          pop: true
+
+  line-continuation-or-pop:
+    - include: line-continuation
+    - match: $|(?=;|#)
+      pop: true
+
+  line-continuation-inside-string:
+    - match: (\\)$\n?
+      captures:
+        1: punctuation.separator.continuation.line.wavedrom
+
+  magic-function-names:
+    - match: |-
+        (?x)\b(__(?:
+          abs|add|aenter|aexit|aiter|anext|await|and|call|cmp|coerce|complex|
+          contains|del|delattr|delete|delitem|delslice|div|divmod|enter|eq|
+          exit|float|floordiv|ge|get|getattr|getattribute|getitem|getslice|
+          gt|hash|hex|iadd|iand|idiv|ifloordiv|ilshift|imod|imul|init|
+          int|invert|ior|ipow|irshift|isub|iter|itruediv|ixor|le|len|
+          long|lshift|lt|mod|mul|ne|neg|new|nonzero|oct|or|pos|pow|
+          radd|rand|rdiv|rdivmod|repr|rfloordiv|rlshift|rmod|rmul|ror|
+          rpow|rrshift|rshift|rsub|rtruediv|rxor|set|setattr|setitem|
+          setslice|str|sub|truediv|unicode|xor
+        )__)\b
+      comment: these methods have magic interpretation by wavedrom and are generally called indirectly through syntactic constructs
+      scope: support.function.magic.wavedrom
+
+  magic-variable-names:
+    - match: \b__(all|bases|class|debug|dict|doc|file|members|metaclass|methods|name|slots|weakref)__\b
+      comment: magic variables which a class/module may have.
+      scope: support.variable.magic.wavedrom
+
+  maybe-docstrings:
+    - include: comments
+    - match: '(?i)(ur|ru|u|r)?(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.comment.begin.wavedrom
+      push:
+        - meta_scope: comment.block.documentation.wavedrom
+        - match: '"""'
+          scope: punctuation.definition.comment.end.wavedrom
+          pop: true
+    - match: "(?i)(ur|ru|u|r)?(''')"
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.comment.begin.wavedrom
+      push:
+        - meta_scope: comment.block.documentation.wavedrom
+        - match: "'''"
+          scope: punctuation.definition.comment.end.wavedrom
+          pop: true
+    - match: (?=\S)
+      pop: true
+    # Pop out of the context if we find a beginning of a line followed by
+    # whitespace and then something other than the beginning of a docstring
+    # or a comment. This allows other rules to consume the beginning of the
+    # line+whitespace.
+    - match: '(?i)(?=^\s*(?![ur]{0,2}(''''''|"""))[^\s#])'
+      pop: true
+
+  string-quoted-double:
+    # Triple-quoted capital R raw string, unicode or not, no syntax embedding
+    - match: '([uU]?R)(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '"""'
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+    # Triple-quoted capital R raw string, bytes, no syntax embedding
+    - match: '([bB]R|R[bB])(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '"""'
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+    # Triple-quoted raw string, unicode or not, will detect SQL, otherwise regex
+    - match: '([uU]?r)(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(?={{sql_indicator}})'
+          set:
+            - meta_scope: string.quoted.double.block.wavedrom
+            - match: '"""'
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: '(?=""")'
+                  pop: true
+                - include: escaped-unicode-char
+                - include: constant-placeholder
+              push: 'scope:source.sql'
+        - match: '(?=\S)'
+          set:
+            - meta_scope: string.quoted.double.block.wavedrom
+            - match: '"""'
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: '(?=""")'
+                  pop: true
+                - include: escaped-unicode-char
+              push: 'scope:source.regexp.wavedrom'
+    # Triple-quoted raw string, bytes, will use regex
+    - match: '([bB]r|r[bB])(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '"""'
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?=""")'
+              pop: true
+          push: 'scope:source.regexp.wavedrom'
+    # Triple-quoted string, unicode or not, will detect SQL
+    - match: '([uU]?)(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(?={{sql_indicator}})'
+          set:
+            - meta_scope: string.quoted.double.block.wavedrom
+            - match: '"""'
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: '(?=""")'
+                  pop: true
+                - include: escaped-unicode-char
+                - include: escaped-char
+                - include: constant-placeholder
+              push: 'scope:source.sql'
+        - match: '(?=\S)'
+          set:
+            - meta_scope: string.quoted.double.block.wavedrom
+            - match: '"""'
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - include: escaped-unicode-char
+            - include: escaped-char
+            - include: constant-placeholder
+    # Triple-quoted string, bytes, no syntax embedding
+    - match: '([bB])(""")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '"""'
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - include: escaped-char
+        - include: constant-placeholder
+    # Single-line capital R raw string, unicode or not, no syntax embedding
+    - match: '([uU]?R)(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+    # Single-line capital R raw string, bytes, no syntax embedding
+    - match: '([bB]R|R[bB])(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+    # Single-line raw string, unicode or not, starting with a SQL keyword
+    - match: '([uU]?r)(")(?={{sql_indicator}})'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?="|\n)'
+              pop: true
+            - include: escaped-unicode-char
+            - include: constant-placeholder
+          push: 'scope:source.sql'
+    # Single-line raw string, unicode or not, treated as regex
+    - match: '([uU]?r)(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?="|\n)'
+              pop: true
+            - include: escaped-unicode-char
+          push: 'scope:source.regexp.wavedrom'
+    # Single-line raw string, bytes, treated as regex
+    - match: '([bB]r|r[bB])(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?="|\n)'
+              pop: true
+          push: 'scope:source.regexp.wavedrom'
+    # Single-line string, unicode or not, starting with a SQL keyword
+    - match: '([uU]?)(")(?={{sql_indicator}})'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?="|\n)'
+              pop: true
+            - include: escaped-unicode-char
+            - include: escaped-char
+            - include: constant-placeholder
+          push: 'scope:source.sql'
+    # Single-line string, unicode or not
+    - match: '([uU]?)(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+        - include: escaped-char
+        - include: constant-placeholder
+        - include: line-continuation-inside-string
+    # Single-line string, bytes
+    - match: '([bB])(")'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.double.block.wavedrom
+        - match: '(")|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-char
+        - include: constant-placeholder
+
+  string-quoted-single:
+    # Triple-quoted capital R raw string, unicode or not, no syntax embedding
+    - match: ([uU]?R)(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: "'''"
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+    # Triple-quoted capital R raw string, bytes, no syntax embedding
+    - match: ([bB]R|R[bB])(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: "'''"
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+    # Triple-quoted raw string, unicode or not, will detect SQL, otherwise regex
+    - match: ([uU]?r)(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '(?={{sql_indicator}})'
+          set:
+            - meta_scope: string.quoted.single.block.wavedrom
+            - match: "'''"
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: (?=''')
+                  pop: true
+                - include: escaped-unicode-char
+                - include: constant-placeholder
+              push: 'scope:source.sql'
+        - match: '(?=\S)'
+          set:
+            - meta_scope: string.quoted.single.block.wavedrom
+            - match: "'''"
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: (?=''')
+                  pop: true
+                - include: escaped-unicode-char
+              push: 'scope:source.regexp.wavedrom'
+    # Triple-quoted raw string, bytes, will use regex
+    - match: ([bB]r|r[bB])(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: "'''"
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: (?=''')
+              pop: true
+          push: 'scope:source.regexp.wavedrom'
+    # Triple-quoted string, unicode or not, will detect SQL
+    - match: ([uU]?)(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '(?={{sql_indicator}})'
+          set:
+            - meta_scope: string.quoted.single.block.wavedrom
+            - match: "'''"
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - match: ''
+              with_prototype:
+                - match: (?=''')
+                  pop: true
+                - include: escaped-unicode-char
+                - include: escaped-char
+                - include: constant-placeholder
+              push: 'scope:source.sql'
+        - match: '(?=\S)'
+          set:
+            - meta_scope: string.quoted.single.block.wavedrom
+            - match: "'''"
+              scope: punctuation.definition.string.end.wavedrom
+              pop: true
+            - include: escaped-unicode-char
+            - include: escaped-char
+            - include: constant-placeholder
+    # Triple-quoted string, bytes, no syntax embedding
+    - match: ([bB])(''')
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: "'''"
+          scope: punctuation.definition.string.end.wavedrom
+          pop: true
+        - include: escaped-char
+        - include: constant-placeholder
+    # Single-line capital R raw string, unicode or not, no syntax embedding
+    - match: '([uU]?R)('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+    # Single-line capital R raw string, bytes, no syntax embedding
+    - match: '([bB]R|R[bB])('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+    # Single-line raw string, unicode or not, starting with a SQL keyword
+    - match: '([uU]?r)('')(?={{sql_indicator}})'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?=''|\n)'
+              pop: true
+            - include: escaped-unicode-char
+            - include: constant-placeholder
+          push: 'scope:source.sql'
+    # Single-line raw string, unicode or not, treated as regex
+    - match: '([uU]?r)('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?=''|\n)'
+              pop: true
+            - include: escaped-unicode-char
+          push: 'scope:source.regexp.wavedrom'
+    # Single-line raw string, bytes, treated as regex
+    - match: '([bB]r|r[bB])('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?=''|\n)'
+              pop: true
+          push: 'scope:source.regexp.wavedrom'
+    # Single-line string, unicode or not, starting with a SQL keyword
+    - match: '([uU]?)('')(?={{sql_indicator}})'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - match: ''
+          with_prototype:
+            - match: '(?=''|\n)'
+              pop: true
+            - include: escaped-unicode-char
+            - include: escaped-char
+            - include: constant-placeholder
+          push: 'scope:source.sql'
+    # Single-line string, unicode or not
+    - match: '([uU]?)('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-unicode-char
+        - include: escaped-char
+        - include: constant-placeholder
+        - include: line-continuation-inside-string
+    # Single-line string, bytes
+    - match: '([bB])('')'
+      captures:
+        1: storage.type.string.wavedrom
+        2: punctuation.definition.string.begin.wavedrom
+      push:
+        - meta_scope: string.quoted.single.block.wavedrom
+        - match: '('')|(\n)'
+          captures:
+            1: punctuation.definition.string.end.wavedrom
+            2: invalid.illegal.unclosed-string.wavedrom
+          pop: true
+        - include: escaped-char
+        - include: constant-placeholder
+
+  strings:
+    - include: string-quoted-double
+    - include: string-quoted-single
+
+  inline-for:
+    - match: \b(for)\b
+      scope: keyword.control.flow.for.generator.wavedrom
+      push:
+        - meta_scope: meta.expression.generator.wavedrom
+        - match: \b(in)\b
+          scope: keyword.control.flow.for.in.wavedrom
+          set:
+            - meta_scope: meta.expression.generator.wavedrom
+            - match: '(?=[)\]}])'
+              pop: true
+            - include: inline-if  # not necessary but more explicit
+            - include: inline-for
+            - include: expressions
+        - match: '(?=[)\]}])'
+          scope: invalid.illegal.missing-in.wavedrom
+          pop: true
+        - include: target-list
+
+  inline-if:
+    - match: \b(if)\b
+      scope: keyword.control.flow.if.inline.wavedrom
+    - match: \b(else)\b
+      scope: keyword.control.flow.else.inline.wavedrom
+
+  target-list:
+    - include: line-continuation-or-pop
+    - match: ','
+      scope: punctuation.separator.target-list.wavedrom
+    - match: \(
+      push:
+        - include: comments
+        - match: ','
+          scope: punctuation.separator.target-list.wavedrom
+        - match: \)
+          pop: true
+        - include: name
+    - include: name
